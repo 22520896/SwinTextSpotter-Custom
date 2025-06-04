@@ -40,7 +40,7 @@ class VisualizationDemo(object):
             self.predictor = AsyncPredictor(cfg, num_gpus=num_gpu)
         else:
             self.predictor = DefaultPredictor(cfg)
-        self.dictionary = [word.lower() for word in open("/kaggle/working/SwinTextSpotter-Custom/vn_dictionary_decoded_lowercase.txt").read().replace("\n\n", "\n").split("\n")]
+        self.dictionary = [word.lower() for word in open("vn_dictionary.txt").read().replace("\n\n", "\n").split("\n")]
         self.trie = Trie(self.dictionary)
 
     def run_on_image(self, image, confidence_threshold, path):
