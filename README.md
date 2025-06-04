@@ -1,13 +1,13 @@
-# Vietnamese Text Spotting with SwinTextSpotter
+# 📸 Vietnamese Text Spotting with SwinTextSpotter
 <img src="demo/ex.png" width="100%">
-This repository implements Vietnamese text spotting using [SwinTextSpotter](https://github.com/mxin262/SwinTextSpotter) (CVPR 2022), enhanced with a dictionary-based correction mechanism. It supports Vietnamese text recognition with tone marks and provides an interactive Gradio interface for visualization.
+This repository implements Vietnamese text spotting using [**SwinTextSpotter**](https://github.com/mxin262/SwinTextSpotter) (CVPR 2022), enhanced with a dictionary-based correction mechanism. It supports Vietnamese text recognition with tone marks and provides an interactive Gradio interface for visualization.
 
-## Features
+## ✨ Key Features
 - **Vietnamese Text Support**: Recognizes Vietnamese text with tone marks (e.g., `à`, `ệ`, `ũ`).
-- **Dictionary-Based Correction**: Uses a Vietnamese dictionary to correct recognition errors (e.g., `nghuiền → `nghiền`).
+- **Dictionary-Based Correction**: Uses a Vietnamese dictionary to correct recognition errors (e.g., `nghuiền` → `nghiền`).
 - **Gradio Interface**: Allows users to upload images, visualize detection results, and compare recognized text with dictionary-corrected candidates.
 
-## Installation
+## 🚀 Installation
 1. **Clone the Repository**:
 ```
 git clone https://github.com/22520896/SwinTextSpotter-Custom.git
@@ -30,4 +30,6 @@ mkdir -p output
 gdown --id 1IfyPrYFnQOWoY8pPg-GIN5ofuALU15yD -O output/model_vintext.pth
 ```
 5. **Run the Application**:
-```python app.py```
+```
+python app.py
+```
