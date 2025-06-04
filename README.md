@@ -1,5 +1,6 @@
 # 📸 Vietnamese Text Spotting with SwinTextSpotter
 <img src="demo/ex.png" width="100%">
+
 This repository implements Vietnamese text spotting using [**SwinTextSpotter**](https://github.com/mxin262/SwinTextSpotter) (CVPR 2022), enhanced with a dictionary-based correction mechanism. It supports Vietnamese text recognition with tone marks and provides an interactive Gradio interface for visualization.
 
 ## ✨ Key Features
