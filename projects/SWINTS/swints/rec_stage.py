@@ -49,7 +49,6 @@ class DynamicConv_v2(nn.Module):
         return features
 
 class REC_STAGE(nn.Module):
-
     def __init__(self, cfg, d_model, num_classes, dim_feedforward=2048, nhead=8, dropout=0.2, activation="relu"):
         super().__init__()
 

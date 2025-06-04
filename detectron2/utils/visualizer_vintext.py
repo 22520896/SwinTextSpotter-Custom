@@ -1,5 +1,3 @@
-# Edit by Yao Lu
-#
 # Copyright (c) Facebook, Inc. and its affiliates.
 import colorsys
 import logging
@@ -35,7 +33,6 @@ _BLACK = (0, 0, 0)
 _RED = (1.0, 0, 0)
 
 _KEYPOINT_THRESHOLD = 0.05
-
 
 def py_cpu_pnms(dets, scores, thresh):
     pts = dets
@@ -395,16 +392,17 @@ class Visualizer:
             np.sqrt(self.output.height * self.output.width) // 90, 10 // scale
         )
         self._instance_mode = instance_mode
-
-    def draw_instance_predictions(self, predictions, path):
+        
+    def draw_instance_predictions(self, predictions, path, use_best_candidates=False, best_candidates=None):
         """
         Draw instance-level prediction results on an image.
-
+    
         Args:
-            predictions (Instances): the output of an instance detection/segmentation
-                model. Following fields will be used to draw:
-                "pred_boxes", "pred_classes", "scores", "pred_masks" (or "pred_masks_rle").
-
+            predictions (Instances): the output of an instance detection/segmentation model.
+            path: path to save the image (if needed).
+            use_best_candidates (bool): if True, draw best_candidates instead of pred_rec.
+            best_candidates (list): list of best candidates to draw (if use_best_candidates is True).
+    
         Returns:
             output (VisImage): image object with visualizations.
         """
@@ -412,29 +410,25 @@ class Visualizer:
         scores = predictions.scores if predictions.has("scores") else None
         classes = predictions.pred_classes if predictions.has("pred_classes") else None
         labels = _create_text_labels(classes, scores, self.metadata.get("thing_classes", None))
-        #luyao#
-        # labels = _create_text_labels(classes, scores, self.metadata.get("thing_classes", None))
         keypoints = predictions.pred_keypoints if predictions.has("pred_keypoints") else None
         rec = predictions.pred_rec if predictions.has("pred_rec") else None
         rec_score = predictions.pred_rec_score if predictions.has("pred_rec_score") else None
-        #luyao#
+    
         if predictions.has("pred_masks"):
             masks = np.asarray(predictions.pred_masks)
             masks = [GenericMask(x, self.output.height, self.output.width) for x in masks]
         else:
             masks = None
-        # masks = None
-        
+    
         if self._instance_mode == ColorMode.SEGMENTATION and self.metadata.get("thing_colors"):
             colors = [
                 self._jitter([x / 255 for x in self.metadata.thing_colors[c]]) for c in classes
             ]
-            #luyao#
             alpha = 0.8
         else:
             colors = None
             alpha = 0.77
-
+    
         if self._instance_mode == ColorMode.IMAGE_BW:
             self.output.img = self._create_grayscale_image(
                 (predictions.pred_masks.any(dim=0) > 0).numpy()
@@ -442,7 +436,7 @@ class Visualizer:
                 else None
             )
             alpha = 0.3
-
+    
         self.overlay_instances(
             rec=rec,
             masks=masks,
@@ -453,9 +447,280 @@ class Visualizer:
             alpha=alpha,
             scores=scores,
             path=path,
-            rec_score = rec_score
+            rec_score=rec_score,
+            use_best_candidates=use_best_candidates,
+            best_candidates=best_candidates
         )
         return self.output
+    
+    def overlay_instances(
+        self,
+        *,
+        rec=None,
+        boxes=None,
+        labels=None,
+        masks=None,
+        keypoints=None,
+        assigned_colors=None,
+        alpha=0.5,
+        scores,
+        path,
+        rec_score,
+        use_best_candidates=False,
+        best_candidates=None
+    ):
+        """
+        Args:
+            rec: recognition results (pred_rec).
+            boxes, labels, masks, keypoints, assigned_colors, alpha, scores, path, rec_score: same as before.
+            use_best_candidates (bool): if True, use best_candidates instead of rec.
+            best_candidates (list): list of best candidates to draw.
+    
+        Returns:
+            output (VisImage): image object with visualizations.
+        """
+        def _ctc_decode_recognition(rec):
+            CTLABELS = [
+                " ",
+                "!",
+                '"',
+                "#",
+                "$",
+                "%",
+                "&",
+                "'",
+                "(",
+                ")",
+                "*",
+                "+",
+                ",",
+                "-",
+                ".",
+                "/",
+                "0",
+                "1",
+                "2",
+                "3",
+                "4",
+                "5",
+                "6",
+                "7",
+                "8",
+                "9",
+                ":",
+                ";",
+                "<",
+                "=",
+                ">",
+                "?",
+                "@",
+                "A",
+                "B",
+                "C",
+                "D",
+                "E",
+                "F",
+                "G",
+                "H",
+                "I",
+                "J",
+                "K",
+                "L",
+                "M",
+                "N",
+                "O",
+                "P",
+                "Q",
+                "R",
+                "S",
+                "T",
+                "U",
+                "V",
+                "W",
+                "X",
+                "Y",
+                "Z",
+                "[",
+                "\\",
+                "]",
+                "^",
+                "_",
+                "`",
+                "a",
+                "b",
+                "c",
+                "d",
+                "e",
+                "f",
+                "g",
+                "h",
+                "i",
+                "j",
+                "k",
+                "l",
+                "m",
+                "n",
+                "o",
+                "p",
+                "q",
+                "r",
+                "s",
+                "t",
+                "u",
+                "v",
+                "w",
+                "x",
+                "y",
+                "z",
+                "{",
+                "|",
+                "}",
+                "~",
+                "ˋ",
+                "ˊ",
+                "﹒",
+                "ˀ",
+                "˜",
+                "ˇ",
+                "ˆ",
+                "˒",
+                "‑",
+            ]
+            last_char = False
+            s = ''
+            for c in rec:
+                c = int(c)
+                if 0 < c < 107:
+                    s += CTLABELS[c-1]
+                    last_char = c
+                elif c == 0:
+                    s += u''
+                else:
+                    last_char = False
+            if len(s) == 0:
+                s = ' '
+            s = decoder(s)
+            return s
+    
+        num_instances = None
+        if boxes is not None:
+            boxes = self._convert_boxes(boxes)
+            num_instances = len(boxes)
+        if masks is not None:
+            masks = self._convert_masks(masks)
+            if num_instances:
+                assert len(masks) == num_instances
+            else:
+                num_instances = len(masks)
+        if keypoints is not None:
+            if num_instances:
+                assert len(keypoints) == num_instances
+            else:
+                num_instances = len(keypoints)
+            keypoints = self._convert_keypoints(keypoints)
+        if labels is not None:
+            assert len(labels) == num_instances
+        if assigned_colors is None:
+            assigned_colors = [random_color(rgb=True, maximum=1) for _ in range(num_instances)]
+        if num_instances == 0:
+            return self.output
+        if boxes is not None and boxes.shape[1] == 5:
+            return self.overlay_rotated_instances(
+                boxes=boxes, labels=labels, assigned_colors=assigned_colors
+            )
+    
+        # Display in largest to smallest order to reduce occlusion.
+        areas = None
+        if boxes is not None:
+            areas = np.prod(boxes[:, 2:] - boxes[:, :2], axis=1)
+        elif masks is not None:
+            areas = np.asarray([x.area() for x in masks])
+    
+        if areas is not None:
+            sorted_idxs = np.argsort(-areas).tolist()
+            boxes = boxes[sorted_idxs] if boxes is not None else None
+            labels = [labels[k] for k in sorted_idxs] if labels is not None else None
+            masks = [masks[idx] for idx in sorted_idxs] if masks is not None else None
+            rec = [rec[idx] for idx in sorted_idxs] if rec is not None else None
+            scores = [scores[idx] for idx in sorted_idxs] if scores is not None else None
+            keypoints = keypoints[sorted_idxs] if keypoints is not None else None
+            if best_candidates is not None:
+                best_candidates = [best_candidates[idx] for idx in sorted_idxs]
+    
+        assigned_colors = [[0,113.985,118.955],[216.75,82.875,24.99],[236.895, 176.97, 31.875],[125.97, 46.92, 141.78],[118.83, 171.87, 47.94],[76.755, 189.975, 237.915],[161.925, 19.89, 46.92],
+            [255,140,0 ],[70,130,180 ],[128,128,0 ],[205,92,92 ],[128,0,128 ],[255,182,193],[255,255,0],[105,105,105],[0,255,255],[0,255,0 ],
+            [210,180,140],[255,0,0 ],[0,139,139],[255,0,255],[127,255,0],[75,0,130],[32,178,170],[255,215,0],[219,112,147],[148,0,211 ],
+            [100,149,237],[175,238,238 ],[143,188,143],[255,255,224 ],[244,164,96],[188,143,143],[192,192,192 ],[220,20,60],[218,112,214],[147,112,219]]
+    
+        # Dùng best_candidates nếu được yêu cầu, nếu không thì dùng pred_rec
+        if use_best_candidates and best_candidates is not None:
+            text_to_draw = best_candidates
+        else:
+            text_to_draw = [_ctc_decode_recognition(rrec) for rrec in rec]
+    
+        poly = []
+        for i in range(num_instances):
+            if masks is not None:
+                bbp = 0
+                for segment in masks[i].polygons:
+                    if bbp == 0:
+                        poly.append(segment.astype(int).reshape(-1, 2))
+                        bbp = 1
+        keep = py_cpu_pnms(poly, scores, 0.5)
+    
+        for i in range(num_instances):
+            if i not in keep:
+                continue
+    
+            color_ = assigned_colors[i % len(assigned_colors)]
+            color = [x/255 for x in color_]
+    
+            H, W, _ = self.img.shape
+            if masks is not None:
+                for segment in masks[i].polygons:
+                    segment = polygon2rbox(segment, H, W)
+                    segment = np.array(segment)
+                    self.draw_polygon(segment.reshape(-1, 2), color, alpha=alpha)
+    
+            if labels is not None:
+                if boxes is not None:
+                    x0, y0, x1, y1 = boxes[i]
+                    text_pos = (x0, y0)
+                    horiz_align = "left"
+                elif masks is not None:
+                    if len(masks[i].polygons) == 0:
+                        continue
+                    x0, y0, x1, y1 = masks[i].bbox()
+                    text_pos = np.median(masks[i].mask.nonzero(), axis=1)[::-1]
+                    horiz_align = "center"
+                else:
+                    continue
+    
+                instance_area = (y1 - y0) * (x1 - x0)
+                if y0 < 5:
+                    text_pos = ((x0+x1)//2, (y0+y1)//2)
+    
+                height_ratio = (y1 - y0) / np.sqrt(self.output.height * self.output.width)
+                lighter_color = self._change_color_brightness(color, brightness_factor=0.7)
+                font_size = (
+                    np.clip((height_ratio - 0.02) / 0.08 + 1, 1.2, 2)
+                    * 1.0
+                    * self._default_font_size
+                )
+                self.draw_text(
+                    text_to_draw[i],
+                    text_pos,
+                    color=lighter_color,
+                    horizontal_alignment=horiz_align,
+                    font_size=font_size,
+                )
+    
+        if keypoints is not None:
+            for keypoints_per_instance in keypoints:
+                self.draw_and_connect_keypoints(keypoints_per_instance)
+    
+        return self.output
+
 
     def draw_sem_seg(self, sem_seg, area_threshold=None, alpha=0.8):
         """
@@ -624,317 +889,6 @@ class Visualizer:
             self.draw_panoptic_seg_predictions(pan_seg, segments_info, area_threshold=0, alpha=0.5)
         return self.output
 
-    def overlay_instances(
-        self,
-        *,
-        rec=None,
-        boxes=None,
-        labels=None,
-        masks=None,
-        keypoints=None,
-        assigned_colors=None,
-        alpha=0.5,
-        scores,
-        path,
-        rec_score,
-    ):
-        """
-        Args:
-            boxes (Boxes, RotatedBoxes or ndarray): either a :class:`Boxes`,
-                or an Nx4 numpy array of XYXY_ABS format for the N objects in a single image,
-                or a :class:`RotatedBoxes`,
-                or an Nx5 numpy array of (x_center, y_center, width, height, angle_degrees) format
-                for the N objects in a single image,
-            labels (list[str]): the text to be displayed for each instance.
-            masks (masks-like object): Supported types are:
-
-                * :class:`detectron2.structures.PolygonMasks`,
-                  :class:`detectron2.structures.BitMasks`.
-                * list[list[ndarray]]: contains the segmentation masks for all objects in one image.
-                  The first level of the list corresponds to individual instances. The second
-                  level to all the polygon that compose the instance, and the third level
-                  to the polygon coordinates. The third level should have the format of
-                  [x0, y0, x1, y1, ..., xn, yn] (n >= 3).
-                * list[ndarray]: each ndarray is a binary mask of shape (H, W).
-                * list[dict]: each dict is a COCO-style RLE.
-            keypoints (Keypoint or array like): an array-like object of shape (N, K, 3),
-                where the N is the number of instances and K is the number of keypoints.
-                The last dimension corresponds to (x, y, visibility or score).
-            assigned_colors (list[matplotlib.colors]): a list of colors, where each color
-                corresponds to each mask or box in the image. Refer to 'matplotlib.colors'
-                for full list of formats that the colors are accepted in.
-
-        Returns:
-            output (VisImage): image object with visualizations.
-        """
-        rec = rec
-        def _ctc_decode_recognition(rec):
-            # CTLABELS = "_0123456789abcdefghijklmnopqrstuvwxyz"
-            # CTLABELS = [' ','!','"','#','$','%','&','\'','(',')','*','+',',','-','.','/','0','1','2','3','4','5','6','7','8','9',':',';','<','=','>','?','@','A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z','[','\\',']','^','_','`','a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s','t','u','v','w','x','y','z','{','|','}','~']
-            CTLABELS = [
-            " ",
-            "!",
-            '"',
-            "#",
-            "$",
-            "%",
-            "&",
-            "'",
-            "(",
-            ")",
-            "*",
-            "+",
-            ",",
-            "-",
-            ".",
-            "/",
-            "0",
-            "1",
-            "2",
-            "3",
-            "4",
-            "5",
-            "6",
-            "7",
-            "8",
-            "9",
-            ":",
-            ";",
-            "<",
-            "=",
-            ">",
-            "?",
-            "@",
-            "A",
-            "B",
-            "C",
-            "D",
-            "E",
-            "F",
-            "G",
-            "H",
-            "I",
-            "J",
-            "K",
-            "L",
-            "M",
-            "N",
-            "O",
-            "P",
-            "Q",
-            "R",
-            "S",
-            "T",
-            "U",
-            "V",
-            "W",
-            "X",
-            "Y",
-            "Z",
-            "[",
-            "\\",
-            "]",
-            "^",
-            "_",
-            "`",
-            "a",
-            "b",
-            "c",
-            "d",
-            "e",
-            "f",
-            "g",
-            "h",
-            "i",
-            "j",
-            "k",
-            "l",
-            "m",
-            "n",
-            "o",
-            "p",
-            "q",
-            "r",
-            "s",
-            "t",
-            "u",
-            "v",
-            "w",
-            "x",
-            "y",
-            "z",
-            "{",
-            "|",
-            "}",
-            "~",
-            "ˋ",
-            "ˊ",
-            "﹒",
-            "ˀ",
-            "˜",
-            "ˇ",
-            "ˆ",
-            "˒",
-            "‑",
-        ]
-            # ctc decoding
-            last_char = False
-            s = ''
-            for c in rec:
-                c = int(c)
-                if 0<c < 107:
-                        s += CTLABELS[c-1]
-                        last_char = c
-                elif c == 0:
-                    s += u''
-                else:
-                    last_char = False
-            if len(s) == 0:
-                s = ' '
-            s = decoder(s)
-            return s
-        num_instances = None
-        if boxes is not None:
-            boxes = self._convert_boxes(boxes)
-            num_instances = len(boxes)
-        if masks is not None:
-            masks = self._convert_masks(masks)
-            if num_instances:
-                assert len(masks) == num_instances
-            else:
-                num_instances = len(masks)
-        if keypoints is not None:
-            if num_instances:
-                assert len(keypoints) == num_instances
-            else:
-                num_instances = len(keypoints)
-            keypoints = self._convert_keypoints(keypoints)
-        if labels is not None:
-            assert len(labels) == num_instances
-        if assigned_colors is None:
-            assigned_colors = [random_color(rgb=True, maximum=1) for _ in range(num_instances)]
-        if num_instances == 0:
-            return self.output
-        if boxes is not None and boxes.shape[1] == 5:
-            return self.overlay_rotated_instances(
-                boxes=boxes, labels=labels, assigned_colors=assigned_colors
-            )
-
-        # Display in largest to smallest order to reduce occlusion.
-        areas = None
-        if boxes is not None:
-            areas = np.prod(boxes[:, 2:] - boxes[:, :2], axis=1)
-        elif masks is not None:
-            areas = np.asarray([x.area() for x in masks])
-
-        if areas is not None:
-            sorted_idxs = np.argsort(-areas).tolist()
-            # Re-order overlapped instances in descending order.
-            boxes = boxes[sorted_idxs] if boxes is not None else None
-            labels = [labels[k] for k in sorted_idxs] if labels is not None else None
-            masks = [masks[idx] for idx in sorted_idxs] if masks is not None else None
-            rec = [rec[idx] for idx in sorted_idxs] if rec is not None else None
-            # rec_score = [rec_score[idx] for idx in sorted_idxs] if rec is not None else None
-            scores = [scores[idx] for idx in sorted_idxs] if scores is not None else None
-            # assigned_colors = [assigned_colors[idx] for idx in sorted_idxs]
-            keypoints = keypoints[sorted_idxs] if keypoints is not None else None
-        #luyao#
-        assigned_colors = [[0,113.985,118.955],[216.75,82.875,24.99],[236.895, 176.97, 31.875],[125.97, 46.92, 141.78],[118.83, 171.87, 47.94],[76.755, 189.975, 237.915],[161.925, 19.89, 46.92],\
-            [255,140,0 ],[70,130,180 ],[128,128,0 ],[205,92,92 ],[128,0,128 ],[255,182,193],[255,255,0],[105,105,105],[0,255,255],[0,255,0 ],\
-            [210,180,140],[255,0,0 ],[0,139,139],[255,0,255],[127,255,0],[75,0,130],[32,178,170],[255,215,0],[219,112,147],[148,0,211 ],\
-                [100,149,237],[175,238,238 ],[143,188,143],[255,255,224 ],[244,164,96],[188,143,143],[192,192,192 ],[220,20,60],[218,112,214],[147,112,219]]
-        rec = [_ctc_decode_recognition(rrec) for rrec in rec]
-        # assigned_colors = [[1,140/255,0],[30/255,144/255,1],[148/255,0,211/255],[0,1,1],[1,0,0],\
-        #     [30/255,143/255,1],[0.94,0.5,0.5],[1,1,0],[0.5,0.5,0],[0.823,0.412,0.117],[0.58,0,0.827],[0.5,0,0]\
-        #     ,[0.82,0.41,0.12],[0.41,0.41,0.41],[0,0.54,0.54],[0.75,0.25,0.65],[0.2,0.6,0.8],[0.74,0,0.3],[0,1.0,0.4],[1,0.5,0.5],[0.5,0.5,1]\
-        #         ,[0.6,0,1],[0.56,0.56,0.3],[0,1,0],[1.0,0.0,0.4],[0.0,1.0,0.4],[0.0,0.5,1.0],[1,215/255,0]]
-        poly = []
-        for i in range(num_instances):
-            if masks is not None:
-                bbp = 0
-                for segment in masks[i].polygons:
-                    if bbp==0:
-                        poly.append(segment.astype(int).reshape(-1,2))
-                        bbp = 1
-        keep = py_cpu_pnms(poly,scores,0.5)
-        for i in range(num_instances):
-            # if rec[i] == ' ':
-            #     continue
-            if i not in keep:
-                continue
-            # color = assigned_colors[i]
-            # print(i)
-            color_ = assigned_colors[i%len(assigned_colors)]
-            color = [x/255 for x in color_]
-            # if boxes is not None:
-            #     self.draw_box(boxes[i], edge_color=color)
-            #luyao
-            # alpha = 0.6
-            H, W, _ = self.img.shape
-            if masks is not None:
-                for segment in masks[i].polygons:
-                    segment = polygon2rbox(segment, H, W)
-                    segment = np.array(segment)
-                    self.draw_polygon(segment.reshape(-1, 2), color, alpha=alpha)
-            if labels is not None:
-                # first get a box
-                if boxes is not None:
-                    #luyao#
-                    x0, y0, x1, y1 = boxes[i]
-                    text_pos = (x0, y0)  # if drawing boxes, put text on the box corner.
-                    horiz_align = "left"
-                elif masks is not None:
-                    # skip small mask without polygon
-                    if len(masks[i].polygons) == 0:
-                        continue
-
-                    x0, y0, x1, y1 = masks[i].bbox()
-
-                    # draw text in the center (defined by median) when box is not drawn
-                    # median is less sensitive to outliers.
-                    text_pos = np.median(masks[i].mask.nonzero(), axis=1)[::-1]
-                    horiz_align = "center"
-                else:
-                    continue  # drawing the box confidence for keypoints isn't very useful.
-                # for small objects, draw text at the side to avoid occlusion
-
-                instance_area = (y1 - y0) * (x1 - x0)
-                # print(x0,' ',x1,' ',y0,' ',y1,' ',self.output.height,' ', self.output.width)
-                #luyao#
-                if y0<5:
-                    text_pos = ((x0+x1)//2,(y0+y1)//2)
-                #luyao#
-                # if (
-                #     instance_area < _SMALL_OBJECT_AREA_THRESH * self.output.scale
-                #     or y1 - y0 < 40 * self.output.scale
-                # ):
-                #     if y1 >= self.output.height - 5:
-                #         text_pos = (x1, y0)
-                #     else:
-                #         text_pos = (x0, y1)
-
-                height_ratio = (y1 - y0) / np.sqrt(self.output.height * self.output.width)
-                lighter_color = self._change_color_brightness(color, brightness_factor=0.7)
-                font_size = (
-                    np.clip((height_ratio - 0.02) / 0.08 + 1, 1.2, 2)
-                    * 1.0
-                    * self._default_font_size
-                )
-                self.draw_text(
-                #    labels[i],
-                    # '',
-                    rec[i],
-                    text_pos,
-                    color=lighter_color,
-                    horizontal_alignment=horiz_align,
-                    font_size=font_size,
-                )
-        # draw keypoints
-        if keypoints is not None:
-            for keypoints_per_instance in keypoints:
-                self.draw_and_connect_keypoints(keypoints_per_instance)
-
-        return self.output
 
     def overlay_rotated_instances(self, boxes=None, labels=None, assigned_colors=None):
         """

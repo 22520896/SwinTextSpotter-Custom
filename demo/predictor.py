@@ -1,17 +1,23 @@
-# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 import atexit
 import bisect
 import multiprocessing as mp
 from collections import deque
 import cv2
 import torch
-
+from dict_trie import Trie
+from Levenshtein import distance as levenshtein_distance
+import torch
+import operator
+from dict_trie import Trie
 from detectron2.data import MetadataCatalog
 from detectron2.engine.defaults import DefaultPredictor
 from detectron2.utils.video_visualizer import VideoVisualizer
 from detectron2.utils.visualizer import ColorMode, Visualizer
 from detectron2.utils.visualizer_chn import Visualizer as Visualizer_chn
 from detectron2.utils.visualizer_vintext import Visualizer as Visualizer_vintext
+from detectron2.utils.visualizer_vintext import decoder
+
+
 
 class VisualizationDemo(object):
     def __init__(self, cfg, instance_mode=ColorMode.IMAGE, parallel=False):
@@ -34,6 +40,8 @@ class VisualizationDemo(object):
             self.predictor = AsyncPredictor(cfg, num_gpus=num_gpu)
         else:
             self.predictor = DefaultPredictor(cfg)
+        self.dictionary = [word.lower() for word in open("/kaggle/working/SwinTextSpotter-Custom/vn_dictionary_decoded_lowercase.txt").read().replace("\n\n", "\n").split("\n")]
+        self.trie = Trie(self.dictionary)
 
     def run_on_image(self, image, confidence_threshold, path):
         """
@@ -47,26 +55,60 @@ class VisualizationDemo(object):
         """
         vis_output = None
         predictions = self.predictor(image)
+    
+    #-----------------------------------
+        recs = predictions['instances'].pred_rec
+        best_candidates = []
+        for rec in recs:
+            rec_string = self.decode(rec)
+            candidates_list = list(self.trie.all_levenshtein(rec_string, 1))
+    
+            candidates = {}
+            for candidate in candidates_list:
+                candidates[candidate] = levenshtein_distance(rec_string, candidate)
+            candidates = sorted(candidates.items(), key=operator.itemgetter(1))
+    
+            if len(candidates) == 0 or candidates[0][0] == "" or candidates[0][0] == " ":
+                candidates.insert(0, (rec_string, 0))
+    
+            best_candidate = candidates[0][0]
+            best_candidates.append(best_candidate)
+        
         # Convert image from OpenCV BGR format to Matplotlib RGB format.
         image = image[:, :, ::-1]
+        
+        # Lấy instances và lọc theo confidence threshold
+        instances = predictions['instances'].to(self.cpu_device)
+        mask = instances.scores > confidence_threshold
+        indices = torch.nonzero(mask).squeeze(1)
+        filtered_instances = instances[indices]
+        filtered_best_candidates = [best_candidates[i] for i in indices]
+    
+        # Tạo visualizer cho pred_rec
         visualizer = Visualizer_vintext(image, self.metadata, instance_mode=self.instance_mode)
-        if "panoptic_seg" in predictions:
-            panoptic_seg, segments_info = predictions["panoptic_seg"]
-            vis_output = visualizer.draw_panoptic_seg_predictions(
-                panoptic_seg.to(self.cpu_device), segments_info
-            )
-        else:
-            if "sem_seg" in predictions:
-                vis_output = visualizer.draw_sem_seg(
-                    predictions["sem_seg"].argmax(dim=0).to(self.cpu_device)
-                )
-            if "instances" in predictions:
-                instances = predictions["instances"].to(self.cpu_device)
-                instances = instances[instances.scores > confidence_threshold]
-                predictions["instances"] = instances
-                vis_output = visualizer.draw_instance_predictions(predictions=instances, path=path)
-
-        return predictions, vis_output
+        vis_output = visualizer.draw_instance_predictions(predictions=filtered_instances, path=path)
+    
+        # Tạo visualizer cho best_candidates
+        visualizer_dict = Visualizer_vintext(image, self.metadata, instance_mode=self.instance_mode)
+        vis_output_dict = visualizer_dict.draw_instance_predictions(predictions=filtered_instances, path=path, use_best_candidates=True, best_candidates=filtered_best_candidates)
+    
+        # Cập nhật predictions
+        predictions["instances"] = filtered_instances
+        
+        return predictions, vis_output, vis_output_dict, filtered_best_candidates
+    
+    def decode(self, rec):
+        CTLABELS = [" ","!",'"',"#","$","%","&","'","(",")","*","+",",","-",".","/","0","1","2","3","4","5","6","7","8","9",":",";","<","=",">","?","@","A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z","[","\\","]","^","_","`","a","b","c","d","e","f","g","h","i","j","k","l","m","n","o","p","q","r","s","t","u","v","w","x","y","z","{","|","}","~","ˋ","ˊ","﹒","ˀ","˜","ˇ","ˆ","˒","‑",'´', "~"]
+        s = ''
+        for c in rec:
+            c = int(c)
+            if 0 < c < len(CTLABELS):
+                s += CTLABELS[c-1]
+            else:
+                s += u''
+            s = decoder(s)
+        return s
+        
 
     def _frame_from_video(self, video):
         while video.isOpened():
@@ -132,6 +174,63 @@ class VisualizationDemo(object):
             for frame in frame_gen:
                 yield process_predictions(frame, self.predictor(frame))
 
+#________________________________________________________
+# dictionary = "aàáạảãâầấậẩẫăằắặẳẵAÀÁẠẢÃĂẰẮẶẲẴÂẦẤẬẨẪeèéẹẻẽêềếệểễEÈÉẸẺẼÊỀẾỆỂỄoòóọỏõôồốộổỗơờớợởỡOÒÓỌỎÕÔỒỐỘỔỖƠỜỚỢỞỠiìíịỉĩIÌÍỊỈĨuùúụủũưừứựửữƯỪỨỰỬỮUÙÚỤỦŨyỳýỵỷỹYỲÝỴỶỸ"
+
+
+# def make_groups():
+#     groups = []
+#     i = 0
+#     while i < len(dictionary) - 5:
+#         group = [c for c in dictionary[i : i + 6]]
+#         i += 6
+#         groups.append(group)
+#     return groups
+
+
+# groups = make_groups()
+
+# TONES = ["", "ˋ", "ˊ", "﹒", "ˀ", "˜"]
+# SOURCES = ["ă", "â", "Ă", "Â", "ê", "Ê", "ô", "ơ", "Ô", "Ơ", "ư", "Ư", "Đ", "đ"]
+# TARGETS = ["aˇ", "aˆ", "Aˇ", "Aˆ", "eˆ", "Eˆ", "oˆ", "o˒", "Oˆ", "O˒", "u˒", "U˒", "D-", "d‑"]
+
+
+# def correct_tone_position(word):
+#     word = word[:-1]
+#     if len(word) < 2:
+#         pass
+#     first_ord_char = ""
+#     second_order_char = ""
+#     for char in word:
+#         for group in groups:
+#             if char in group:
+#                 second_order_char = first_ord_char
+#                 first_ord_char = group[0]
+#     if word[-1] == first_ord_char and second_order_char != "":
+#         pair_chars = ["qu", "Qu", "qU", "QU", "gi", "Gi", "gI", "GI"]
+#         for pair in pair_chars:
+#             if pair in word and second_order_char in ["u", "U", "i", "I"]:
+#                 return first_ord_char
+#         return second_order_char
+#     return first_ord_char
+
+
+# def vintext_decoder(recognition):
+#     for char in TARGETS:
+#         recognition = recognition.replace(char, SOURCES[TARGETS.index(char)])
+#     if len(recognition) < 1:
+#         return recognition
+#     if recognition[-1] in TONES:
+#         if len(recognition) < 2:
+#             return recognition
+#         replace_char = correct_tone_position(recognition)
+#         tone = recognition[-1]
+#         recognition = recognition[:-1]
+#         for group in groups:
+#             if replace_char in group:
+#                 recognition = recognition.replace(replace_char, group[TONES.index(tone)])
+#     return recognition
+#________________________________________________________
 
 class AsyncPredictor:
     """
